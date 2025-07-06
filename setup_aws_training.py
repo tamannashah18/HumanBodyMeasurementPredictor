@@ -43,18 +43,20 @@ def install_aws_requirements(venv_path):
     """Install AWS-specific requirements"""
     print("Installing AWS training requirements...")
     
-    pip_path = get_venv_pip(venv_path)
     python_path = get_venv_python(venv_path)
     
-    if not os.path.exists(pip_path):
-        pip_command = [python_path, "-m", "pip"]
-    else:
-        pip_command = [pip_path]
+    # Always use python -m pip to avoid path issues
+    pip_command = [python_path, "-m", "pip"]
     
     try:
-        # Upgrade pip first
+        # Try to upgrade pip using the recommended method
         print("Upgrading pip...")
-        subprocess.check_call(pip_command + ["install", "--upgrade", "pip"])
+        try:
+            subprocess.check_call(pip_command + ["install", "--upgrade", "pip"], 
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print("✓ Pip upgraded successfully")
+        except subprocess.CalledProcessError:
+            print("⚠ Pip upgrade failed, continuing with existing version...")
         
         # Install AWS requirements
         print("Installing AWS training packages...")
@@ -62,8 +64,32 @@ def install_aws_requirements(venv_path):
         
         print("✓ All AWS packages installed successfully!")
         return True
+        
     except subprocess.CalledProcessError as e:
         print(f"✗ Error installing packages: {e}")
+        print("Trying alternative installation method...")
+        
+        # Try installing packages individually
+        try:
+            essential_packages = [
+                "boto3==1.34.0",
+                "pandas==2.0.3", 
+                "tqdm==4.66.1",
+                "requests==2.31.0"
+            ]
+            
+            for package in essential_packages:
+                print(f"Installing {package}...")
+                subprocess.check_call(pip_command + ["install", package])
+            
+            print("✓ Essential AWS packages installed!")
+            return True
+            
+        except subprocess.CalledProcessError as e2:
+            print(f"✗ Alternative installation also failed: {e2}")
+            return False
+    except FileNotFoundError:
+        print("✗ Python executable not found in virtual environment")
         return False
 
 def test_aws_connection(venv_path):
@@ -131,7 +157,7 @@ echo ""
 echo "Available commands:"
 echo "  python aws_data_loader.py     - Test AWS data loading"
 echo "  python train_real_model.py    - Train with real BodyM data"
-echo "  python webcam_predictor.py    - Test predictions"
+echo "  python update_webcam_predictor.py - Test predictions with both models"
 echo "  deactivate                    - Exit environment"
 echo ""
 echo "Dataset info:"
@@ -157,7 +183,7 @@ echo.
 echo Available commands:
 echo   python aws_data_loader.py     - Test AWS data loading
 echo   python train_real_model.py    - Train with real BodyM data
-echo   python webcam_predictor.py    - Test predictions
+echo   python update_webcam_predictor.py - Test predictions with both models
 echo   deactivate                    - Exit environment
 echo.
 echo Dataset info:
@@ -170,9 +196,39 @@ echo   Access: Public (no credentials needed)
     
     print("✓ Created AWS activation scripts: activate_aws.sh and activate_aws.bat")
 
+def create_requirements_if_missing():
+    """Create requirements_aws.txt if it doesn't exist"""
+    if not os.path.exists("requirements_aws.txt"):
+        print("Creating requirements_aws.txt...")
+        requirements_content = """# Core ML and CV libraries
+opencv-python==4.8.1.78
+tensorflow==2.13.0
+numpy==1.24.3
+mediapipe==0.10.7
+Pillow==10.0.1
+matplotlib==3.7.2
+scikit-learn==1.3.0
+tabulate==0.9.0
+
+# AWS and data processing
+boto3==1.34.0
+botocore==1.34.0
+pandas==2.0.3
+tqdm==4.66.1
+
+# Additional utilities
+requests==2.31.0
+"""
+        with open("requirements_aws.txt", "w") as f:
+            f.write(requirements_content)
+        print("✓ Created requirements_aws.txt")
+
 def main():
     """Main setup function for AWS training"""
     print("=== AWS BodyM Dataset Training Setup ===\n")
+    
+    # Create requirements file if missing
+    create_requirements_if_missing()
     
     # Create virtual environment
     venv_path = create_virtual_environment()
@@ -221,8 +277,8 @@ def main():
         print("\n3. Train with real BodyM data:")
         print("   python train_real_model.py")
         
-        print("\n4. Test predictions:")
-        print("   python webcam_predictor.py")
+        print("\n4. Test predictions with enhanced predictor:")
+        print("   python update_webcam_predictor.py")
         
         print("\n📊 Training Tips:")
         print("   - Start with 100-500 images for testing")
@@ -230,17 +286,27 @@ def main():
         print("   - Training time depends on dataset size")
         print("   - Monitor GPU usage if available")
         
-    else:
-        print("⚠️  Setup incomplete. Issues detected:")
-        if not packages_installed:
-            print("   - Package installation failed")
-        if not aws_ok:
-            print("   - AWS S3 connection failed")
+    elif packages_installed:
+        print("⚠️  Packages installed but AWS connection failed.")
+        print("This might be due to network issues. You can still proceed:")
+        print("\n1. Activate environment and try manual testing:")
+        if os.name == 'nt':
+            print("   activate_aws.bat")
+        else:
+            print("   ./activate_aws.sh")
+        print("   python aws_data_loader.py")
         
+    else:
+        print("⚠️  Setup incomplete. Package installation failed.")
         print("\nTroubleshooting:")
         print("   - Ensure stable internet connection")
-        print("   - Try running in local environment")
+        print("   - Try running as administrator (Windows)")
         print("   - Check firewall/proxy settings")
+        print("   - Try manual installation:")
+        if os.name == 'nt':
+            print(f"     {venv_path}\\Scripts\\python.exe -m pip install boto3 pandas")
+        else:
+            print(f"     {venv_path}/bin/python -m pip install boto3 pandas")
 
 if __name__ == "__main__":
     main()
