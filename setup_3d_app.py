@@ -142,7 +142,7 @@ echo ""
 echo "🎯 Start with: python main_app.py"
 """
     
-    with open("activate_3d.sh", "w") as f:
+    with open("activate_3d.sh", "w", encoding="utf-8") as f:
         f.write(activate_script)
     
     try:
@@ -169,7 +169,7 @@ echo.
 echo 🎯 Start with: python main_app.py
 """
     
-    with open("activate_3d.bat", "w") as f:
+    with open("activate_3d.bat", "w", encoding="utf-8") as f:
         f.write(activate_bat)
     
     print("✓ Created 3D app activation scripts: activate_3d.sh and activate_3d.bat")
@@ -205,7 +205,7 @@ tabulate==0.9.0
 tqdm==4.66.1
 requests==2.31.0
 """
-        with open("requirements_3d.txt", "w") as f:
+        with open("requirements_3d.txt", "w", encoding="utf-8") as f:
             f.write(requirements_content)
         print("✓ Created requirements_3d.txt")
 
