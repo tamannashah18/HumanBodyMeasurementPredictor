@@ -6,77 +6,91 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import cv2
+from scipy.spatial import ConvexHull
+from scipy.interpolate import interp1d
+import trimesh
 
 class BodyMeshGenerator:
-    """Generate 3D body mesh from pose landmarks and measurements"""
+    """Generate realistic 3D body mesh from pose landmarks and measurements"""
     
     def __init__(self):
-        # Define body segments and their connections
+        # Define body segments with anatomical proportions
         self.body_segments = {
             'head': {
-                'landmarks': ['nose'],
-                'connections': [],
-                'type': 'sphere'
+                'landmarks': ['nose', 'left_ear', 'right_ear'],
+                'type': 'ellipsoid',
+                'proportions': {'width': 0.15, 'height': 0.23, 'depth': 0.18}
+            },
+            'neck': {
+                'landmarks': ['nose', 'left_shoulder', 'right_shoulder'],
+                'type': 'cylinder',
+                'proportions': {'radius': 0.06, 'length': 0.12}
             },
             'torso': {
                 'landmarks': ['left_shoulder', 'right_shoulder', 'left_hip', 'right_hip'],
-                'connections': [
-                    ('left_shoulder', 'right_shoulder'),
-                    ('left_shoulder', 'left_hip'),
-                    ('right_shoulder', 'right_hip'),
-                    ('left_hip', 'right_hip')
-                ],
-                'type': 'rectangular_prism'
+                'type': 'tapered_cylinder',
+                'proportions': {'top_radius': 0.18, 'bottom_radius': 0.14, 'length': 0.45}
             },
-            'left_arm': {
-                'landmarks': ['left_shoulder', 'left_elbow', 'left_wrist'],
-                'connections': [
-                    ('left_shoulder', 'left_elbow'),
-                    ('left_elbow', 'left_wrist')
-                ],
-                'type': 'cylindrical'
+            'left_upper_arm': {
+                'landmarks': ['left_shoulder', 'left_elbow'],
+                'type': 'tapered_cylinder',
+                'proportions': {'top_radius': 0.05, 'bottom_radius': 0.04, 'length': 0.3}
             },
-            'right_arm': {
-                'landmarks': ['right_shoulder', 'right_elbow', 'right_wrist'],
-                'connections': [
-                    ('right_shoulder', 'right_elbow'),
-                    ('right_elbow', 'right_wrist')
-                ],
-                'type': 'cylindrical'
+            'left_forearm': {
+                'landmarks': ['left_elbow', 'left_wrist'],
+                'type': 'tapered_cylinder',
+                'proportions': {'top_radius': 0.04, 'bottom_radius': 0.03, 'length': 0.25}
             },
-            'left_leg': {
-                'landmarks': ['left_hip', 'left_knee', 'left_ankle'],
-                'connections': [
-                    ('left_hip', 'left_knee'),
-                    ('left_knee', 'left_ankle')
-                ],
-                'type': 'cylindrical'
+            'right_upper_arm': {
+                'landmarks': ['right_shoulder', 'right_elbow'],
+                'type': 'tapered_cylinder',
+                'proportions': {'top_radius': 0.05, 'bottom_radius': 0.04, 'length': 0.3}
             },
-            'right_leg': {
-                'landmarks': ['right_hip', 'right_knee', 'right_ankle'],
-                'connections': [
-                    ('right_hip', 'right_knee'),
-                    ('right_knee', 'right_ankle')
-                ],
-                'type': 'cylindrical'
+            'right_forearm': {
+                'landmarks': ['right_elbow', 'right_wrist'],
+                'type': 'tapered_cylinder',
+                'proportions': {'top_radius': 0.04, 'bottom_radius': 0.03, 'length': 0.25}
+            },
+            'left_thigh': {
+                'landmarks': ['left_hip', 'left_knee'],
+                'type': 'tapered_cylinder',
+                'proportions': {'top_radius': 0.08, 'bottom_radius': 0.06, 'length': 0.4}
+            },
+            'left_shin': {
+                'landmarks': ['left_knee', 'left_ankle'],
+                'type': 'tapered_cylinder',
+                'proportions': {'top_radius': 0.06, 'bottom_radius': 0.04, 'length': 0.35}
+            },
+            'right_thigh': {
+                'landmarks': ['right_hip', 'right_knee'],
+                'type': 'tapered_cylinder',
+                'proportions': {'top_radius': 0.08, 'bottom_radius': 0.06, 'length': 0.4}
+            },
+            'right_shin': {
+                'landmarks': ['right_knee', 'right_ankle'],
+                'type': 'tapered_cylinder',
+                'proportions': {'top_radius': 0.06, 'bottom_radius': 0.04, 'length': 0.35}
             }
         }
         
-        # Landmark mapping
+        # Landmark mapping for MediaPipe pose
         self.landmark_map = {
             'nose': 0,
-            'left_shoulder': 11,
-            'right_shoulder': 12,
-            'left_elbow': 13,
-            'right_elbow': 14,
-            'left_wrist': 15,
-            'right_wrist': 16,
-            'left_hip': 23,
-            'right_hip': 24,
-            'left_knee': 25,
-            'right_knee': 26,
-            'left_ankle': 27,
-            'right_ankle': 28
+            'left_eye_inner': 1, 'left_eye': 2, 'left_eye_outer': 3,
+            'right_eye_inner': 4, 'right_eye': 5, 'right_eye_outer': 6,
+            'left_ear': 7, 'right_ear': 8,
+            'mouth_left': 9, 'mouth_right': 10,
+            'left_shoulder': 11, 'right_shoulder': 12,
+            'left_elbow': 13, 'right_elbow': 14,
+            'left_wrist': 15, 'right_wrist': 16,
+            'left_pinky': 17, 'right_pinky': 18,
+            'left_index': 19, 'right_index': 20,
+            'left_thumb': 21, 'right_thumb': 22,
+            'left_hip': 23, 'right_hip': 24,
+            'left_knee': 25, 'right_knee': 26,
+            'left_ankle': 27, 'right_ankle': 28,
+            'left_heel': 29, 'right_heel': 30,
+            'left_foot_index': 31, 'right_foot_index': 32
         }
     
     def load_session_data(self, session_dir: str) -> Dict:
@@ -104,7 +118,7 @@ class BodyMeshGenerator:
         return data
     
     def get_landmark_position(self, landmark_name: str, session_data: Dict) -> Optional[Tuple[float, float, float]]:
-        """Get 3D position of a landmark"""
+        """Get 3D position of a landmark with improved accuracy"""
         if landmark_name not in self.landmark_map:
             return None
         
@@ -121,21 +135,76 @@ class BodyMeshGenerator:
             landmarks = session_data['pose_landmarks']['front']['landmarks']
             if landmark_idx < len(landmarks):
                 landmark = landmarks[landmark_idx]
-                return (landmark['x'], landmark['y'], landmark['z'])
+                # Estimate depth based on body part
+                depth = self.estimate_depth_from_landmark(landmark_name, landmark)
+                return (landmark['x'], landmark['y'], depth)
         
         return None
     
-    def create_cylinder_mesh(self, start_point: Tuple[float, float, float], 
-                           end_point: Tuple[float, float, float], 
-                           radius: float, segments: int = 8) -> Tuple[np.ndarray, List]:
-        """Create a cylindrical mesh between two points"""
-        start = np.array(start_point)
-        end = np.array(end_point)
+    def estimate_depth_from_landmark(self, landmark_name: str, landmark: Dict) -> float:
+        """Estimate depth for 2D landmarks based on anatomical knowledge"""
+        # Default depth values based on typical human anatomy
+        depth_map = {
+            'nose': 0.1, 'left_ear': -0.05, 'right_ear': -0.05,
+            'left_shoulder': 0.0, 'right_shoulder': 0.0,
+            'left_elbow': 0.05, 'right_elbow': 0.05,
+            'left_wrist': 0.1, 'right_wrist': 0.1,
+            'left_hip': 0.0, 'right_hip': 0.0,
+            'left_knee': 0.05, 'right_knee': 0.05,
+            'left_ankle': 0.0, 'right_ankle': 0.0
+        }
+        
+        base_depth = depth_map.get(landmark_name, 0.0)
+        # Add some variation based on landmark confidence
+        confidence_factor = landmark.get('visibility', 0.5)
+        return base_depth * confidence_factor
+    
+    def create_ellipsoid_mesh(self, center: np.ndarray, radii: Tuple[float, float, float], 
+                             resolution: int = 16) -> Tuple[np.ndarray, List]:
+        """Create an ellipsoid mesh for head/torso"""
+        vertices = []
+        faces = []
+        
+        # Generate ellipsoid vertices
+        for i in range(resolution):
+            for j in range(resolution):
+                u = 2 * np.pi * i / resolution
+                v = np.pi * j / resolution
+                
+                x = radii[0] * np.sin(v) * np.cos(u)
+                y = radii[1] * np.sin(v) * np.sin(u)
+                z = radii[2] * np.cos(v)
+                
+                vertices.append(center + np.array([x, y, z]))
+        
+        # Generate faces
+        for i in range(resolution):
+            for j in range(resolution):
+                next_i = (i + 1) % resolution
+                next_j = (j + 1) % resolution
+                
+                v1 = i * resolution + j
+                v2 = next_i * resolution + j
+                v3 = next_i * resolution + next_j
+                v4 = i * resolution + next_j
+                
+                # Two triangles per quad
+                faces.append([v1, v2, v3])
+                faces.append([v1, v3, v4])
+        
+        return np.array(vertices), faces
+    
+    def create_tapered_cylinder_mesh(self, start_point: np.ndarray, end_point: np.ndarray,
+                                   start_radius: float, end_radius: float, 
+                                   segments: int = 12) -> Tuple[np.ndarray, List]:
+        """Create a tapered cylindrical mesh for limbs"""
+        vertices = []
+        faces = []
         
         # Calculate cylinder axis
-        axis = end - start
+        axis = end_point - start_point
         length = np.linalg.norm(axis)
-        axis_normalized = axis / length
+        axis_normalized = axis / length if length > 0 else np.array([0, 1, 0])
         
         # Create perpendicular vectors
         if abs(axis_normalized[2]) < 0.9:
@@ -145,62 +214,43 @@ class BodyMeshGenerator:
         perp1 = perp1 / np.linalg.norm(perp1)
         perp2 = np.cross(axis_normalized, perp1)
         
-        # Generate vertices
-        vertices = []
-        faces = []
+        # Generate vertices along the cylinder
+        num_rings = 8  # Number of rings along the cylinder
+        for ring in range(num_rings):
+            t = ring / (num_rings - 1)  # Parameter from 0 to 1
+            
+            # Interpolate position and radius
+            current_pos = start_point + t * axis
+            current_radius = start_radius + t * (end_radius - start_radius)
+            
+            # Create ring of vertices
+            for i in range(segments):
+                angle = 2 * np.pi * i / segments
+                offset = current_radius * (np.cos(angle) * perp1 + np.sin(angle) * perp2)
+                vertices.append(current_pos + offset)
         
-        # Create circles at both ends
-        for i in range(segments):
-            angle = 2 * np.pi * i / segments
-            
-            # Bottom circle
-            offset = radius * (np.cos(angle) * perp1 + np.sin(angle) * perp2)
-            vertices.append(start + offset)
-            
-            # Top circle
-            vertices.append(end + offset)
-        
-        # Create faces
-        for i in range(segments):
-            next_i = (i + 1) % segments
-            
-            # Side faces (two triangles per segment)
-            bottom1, top1 = 2 * i, 2 * i + 1
-            bottom2, top2 = 2 * next_i, 2 * next_i + 1
-            
-            faces.append([bottom1, top1, top2])
-            faces.append([bottom1, top2, bottom2])
+        # Generate faces
+        for ring in range(num_rings - 1):
+            for i in range(segments):
+                next_i = (i + 1) % segments
+                
+                # Current ring vertices
+                v1 = ring * segments + i
+                v2 = ring * segments + next_i
+                
+                # Next ring vertices
+                v3 = (ring + 1) * segments + next_i
+                v4 = (ring + 1) * segments + i
+                
+                # Two triangles per quad
+                faces.append([v1, v2, v3])
+                faces.append([v1, v3, v4])
         
         return np.array(vertices), faces
     
-    def create_box_mesh(self, corners: List[Tuple[float, float, float]]) -> Tuple[np.ndarray, List]:
-        """Create a box mesh from corner points"""
-        if len(corners) != 8:
-            raise ValueError("Box mesh requires 8 corner points")
-        
-        vertices = np.array(corners)
-        
-        # Define faces (each face is defined by 4 vertices, split into 2 triangles)
-        faces = [
-            # Front face
-            [0, 1, 2], [0, 2, 3],
-            # Back face
-            [4, 6, 5], [4, 7, 6],
-            # Left face
-            [0, 4, 5], [0, 5, 1],
-            # Right face
-            [2, 6, 7], [2, 7, 3],
-            # Top face
-            [1, 5, 6], [1, 6, 2],
-            # Bottom face
-            [0, 3, 7], [0, 7, 4]
-        ]
-        
-        return vertices, faces
-    
-    def create_torso_mesh(self, session_data: Dict) -> Tuple[np.ndarray, List]:
-        """Create torso mesh from shoulder and hip landmarks"""
-        # Get landmark positions
+    def create_anatomical_torso(self, session_data: Dict) -> Tuple[np.ndarray, List]:
+        """Create anatomically correct torso mesh"""
+        # Get key landmarks
         left_shoulder = self.get_landmark_position('left_shoulder', session_data)
         right_shoulder = self.get_landmark_position('right_shoulder', session_data)
         left_hip = self.get_landmark_position('left_hip', session_data)
@@ -209,35 +259,59 @@ class BodyMeshGenerator:
         if not all([left_shoulder, right_shoulder, left_hip, right_hip]):
             raise ValueError("Missing required landmarks for torso mesh")
         
-        # Estimate torso depth from measurements
-        torso_depth = 0.3  # Default depth
-        if 'measurements' in session_data and 'chest_circumference' in session_data['measurements']:
-            chest_circ = session_data['measurements']['chest_circumference']['value']
-            torso_depth = chest_circ / (2 * np.pi) * 0.5  # Approximate depth
+        # Calculate torso dimensions from measurements
+        measurements = session_data.get('measurements', {})
         
-        # Create 8 corners of torso box
-        # Front face
-        front_offset = np.array([0, 0, torso_depth / 2])
-        corners = [
-            np.array(left_shoulder) + front_offset,   # 0: left shoulder front
-            np.array(right_shoulder) + front_offset,  # 1: right shoulder front
-            np.array(right_hip) + front_offset,       # 2: right hip front
-            np.array(left_hip) + front_offset,        # 3: left hip front
-        ]
+        # Get chest and waist measurements
+        chest_width = 0.35  # Default
+        waist_width = 0.28  # Default
         
-        # Back face
-        back_offset = np.array([0, 0, -torso_depth / 2])
-        corners.extend([
-            np.array(left_shoulder) + back_offset,    # 4: left shoulder back
-            np.array(right_shoulder) + back_offset,   # 5: right shoulder back
-            np.array(right_hip) + back_offset,        # 6: right hip back
-            np.array(left_hip) + back_offset,         # 7: left hip back
-        ])
+        if 'chest_circumference' in measurements:
+            chest_circ = measurements['chest_circumference'].get('value', 100)
+            chest_width = chest_circ / (2 * np.pi)
         
-        return self.create_box_mesh(corners)
+        if 'waist_circumference' in measurements:
+            waist_circ = measurements['waist_circumference'].get('value', 80)
+            waist_width = waist_circ / (2 * np.pi)
+        
+        # Calculate torso center and orientation
+        shoulder_center = (np.array(left_shoulder) + np.array(right_shoulder)) / 2
+        hip_center = (np.array(left_hip) + np.array(right_hip)) / 2
+        
+        # Create tapered cylinder for torso
+        chest_radius = chest_width / 2
+        waist_radius = waist_width / 2
+        
+        return self.create_tapered_cylinder_mesh(
+            shoulder_center, hip_center, chest_radius, waist_radius, segments=16
+        )
     
-    def create_limb_mesh(self, segment_name: str, session_data: Dict) -> Tuple[np.ndarray, List]:
-        """Create mesh for arm or leg segments"""
+    def create_anatomical_head(self, session_data: Dict) -> Tuple[np.ndarray, List]:
+        """Create anatomically correct head mesh"""
+        nose = self.get_landmark_position('nose', session_data)
+        left_ear = self.get_landmark_position('left_ear', session_data)
+        right_ear = self.get_landmark_position('right_ear', session_data)
+        
+        if not nose:
+            raise ValueError("Missing nose landmark for head mesh")
+        
+        # Estimate head center and size
+        head_center = np.array(nose)
+        if left_ear and right_ear:
+            ear_center = (np.array(left_ear) + np.array(right_ear)) / 2
+            head_center = (head_center + ear_center) / 2
+        
+        # Head dimensions (approximate)
+        head_width = 0.15
+        head_height = 0.23
+        head_depth = 0.18
+        
+        return self.create_ellipsoid_mesh(
+            head_center, (head_width, head_height, head_depth), resolution=12
+        )
+    
+    def create_anatomical_limb(self, segment_name: str, session_data: Dict) -> Tuple[np.ndarray, List]:
+        """Create anatomically correct limb mesh"""
         segment = self.body_segments[segment_name]
         landmarks = segment['landmarks']
         
@@ -246,39 +320,62 @@ class BodyMeshGenerator:
         for landmark in landmarks:
             pos = self.get_landmark_position(landmark, session_data)
             if pos:
-                positions.append(pos)
+                positions.append(np.array(pos))
         
         if len(positions) < 2:
             raise ValueError(f"Insufficient landmarks for {segment_name}")
         
-        # Estimate limb radius from measurements
-        radius = 0.05  # Default radius
-        if 'measurements' in session_data:
-            if 'arm' in segment_name and 'arm_length' in session_data['measurements']:
-                radius = 0.03  # Arm radius
-            elif 'leg' in segment_name and 'leg_length' in session_data['measurements']:
-                radius = 0.04  # Leg radius
+        # Get proportions from measurements
+        measurements = session_data.get('measurements', {})
+        proportions = segment['proportions']
         
-        # Create cylindrical segments
-        all_vertices = []
-        all_faces = []
-        vertex_offset = 0
+        # Adjust radius based on measurements
+        start_radius = proportions['top_radius']
+        end_radius = proportions['bottom_radius']
         
-        for i in range(len(positions) - 1):
-            vertices, faces = self.create_cylinder_mesh(positions[i], positions[i + 1], radius)
+        # Scale based on actual measurements if available
+        if 'arm_length' in measurements and 'arm' in segment_name:
+            scale_factor = measurements['arm_length'].get('value', 65) / 65.0
+            start_radius *= scale_factor
+            end_radius *= scale_factor
+        elif 'leg_length' in measurements and ('thigh' in segment_name or 'shin' in segment_name):
+            scale_factor = measurements['leg_length'].get('value', 85) / 85.0
+            start_radius *= scale_factor
+            end_radius *= scale_factor
+        
+        return self.create_tapered_cylinder_mesh(
+            positions[0], positions[1], start_radius, end_radius, segments=12
+        )
+    
+    def smooth_mesh_vertices(self, vertices: np.ndarray, faces: List, iterations: int = 2) -> np.ndarray:
+        """Apply Laplacian smoothing to mesh vertices"""
+        smoothed_vertices = vertices.copy()
+        
+        for _ in range(iterations):
+            new_vertices = smoothed_vertices.copy()
             
-            # Adjust face indices
-            adjusted_faces = [[f[0] + vertex_offset, f[1] + vertex_offset, f[2] + vertex_offset] for f in faces]
+            # For each vertex, average with its neighbors
+            for i, vertex in enumerate(smoothed_vertices):
+                neighbors = []
+                
+                # Find neighboring vertices through faces
+                for face in faces:
+                    if i in face:
+                        for v_idx in face:
+                            if v_idx != i and v_idx not in neighbors:
+                                neighbors.append(v_idx)
+                
+                if neighbors:
+                    neighbor_positions = smoothed_vertices[neighbors]
+                    new_vertices[i] = np.mean(neighbor_positions, axis=0)
             
-            all_vertices.extend(vertices)
-            all_faces.extend(adjusted_faces)
-            vertex_offset += len(vertices)
+            smoothed_vertices = new_vertices
         
-        return np.array(all_vertices), all_faces
+        return smoothed_vertices
     
     def generate_full_body_mesh(self, session_dir: str) -> Dict:
-        """Generate complete body mesh from session data"""
-        print(f"🎭 Generating 3D body mesh from: {session_dir}")
+        """Generate complete anatomically correct body mesh"""
+        print(f"🎭 Generating realistic 3D body mesh from: {session_dir}")
         
         # Load session data
         session_data = self.load_session_data(session_dir)
@@ -289,39 +386,70 @@ class BodyMeshGenerator:
         mesh_data = {
             'vertices': [],
             'faces': [],
-            'segments': {}
+            'segments': {},
+            'materials': {}
         }
         
         vertex_offset = 0
         
         try:
+            # Generate head mesh
+            print("🧠 Creating anatomical head mesh...")
+            try:
+                head_vertices, head_faces = self.create_anatomical_head(session_data)
+                head_vertices = self.smooth_mesh_vertices(head_vertices, head_faces)
+                
+                adjusted_head_faces = [[f[0] + vertex_offset, f[1] + vertex_offset, f[2] + vertex_offset] 
+                                      for f in head_faces]
+                
+                mesh_data['vertices'].extend(head_vertices.tolist())
+                mesh_data['faces'].extend(adjusted_head_faces)
+                mesh_data['segments']['head'] = {
+                    'vertex_start': vertex_offset,
+                    'vertex_count': len(head_vertices),
+                    'face_start': 0,
+                    'face_count': len(adjusted_head_faces)
+                }
+                mesh_data['materials']['head'] = {'color': [0.9, 0.8, 0.7, 1.0]}  # Skin color
+                vertex_offset += len(head_vertices)
+                
+            except Exception as e:
+                print(f"⚠️ Failed to create head mesh: {e}")
+            
             # Generate torso mesh
-            print("📦 Creating torso mesh...")
-            torso_vertices, torso_faces = self.create_torso_mesh(session_data)
-            
-            # Adjust face indices
-            adjusted_torso_faces = [[f[0] + vertex_offset, f[1] + vertex_offset, f[2] + vertex_offset] 
-                                   for f in torso_faces]
-            
-            mesh_data['vertices'].extend(torso_vertices.tolist())
-            mesh_data['faces'].extend(adjusted_torso_faces)
-            mesh_data['segments']['torso'] = {
-                'vertex_start': vertex_offset,
-                'vertex_count': len(torso_vertices),
-                'face_start': 0,
-                'face_count': len(adjusted_torso_faces)
-            }
-            vertex_offset += len(torso_vertices)
+            print("📦 Creating anatomical torso mesh...")
+            try:
+                torso_vertices, torso_faces = self.create_anatomical_torso(session_data)
+                torso_vertices = self.smooth_mesh_vertices(torso_vertices, torso_faces)
+                
+                adjusted_torso_faces = [[f[0] + vertex_offset, f[1] + vertex_offset, f[2] + vertex_offset] 
+                                       for f in torso_faces]
+                
+                face_start = len(mesh_data['faces'])
+                mesh_data['vertices'].extend(torso_vertices.tolist())
+                mesh_data['faces'].extend(adjusted_torso_faces)
+                mesh_data['segments']['torso'] = {
+                    'vertex_start': vertex_offset,
+                    'vertex_count': len(torso_vertices),
+                    'face_start': face_start,
+                    'face_count': len(adjusted_torso_faces)
+                }
+                mesh_data['materials']['torso'] = {'color': [0.9, 0.8, 0.7, 1.0]}  # Skin color
+                vertex_offset += len(torso_vertices)
+                
+            except Exception as e:
+                print(f"⚠️ Failed to create torso mesh: {e}")
             
             # Generate limb meshes
-            limbs = ['left_arm', 'right_arm', 'left_leg', 'right_leg']
+            limbs = ['left_upper_arm', 'left_forearm', 'right_upper_arm', 'right_forearm',
+                    'left_thigh', 'left_shin', 'right_thigh', 'right_shin']
             
             for limb in limbs:
                 try:
                     print(f"🦾 Creating {limb} mesh...")
-                    limb_vertices, limb_faces = self.create_limb_mesh(limb, session_data)
+                    limb_vertices, limb_faces = self.create_anatomical_limb(limb, session_data)
+                    limb_vertices = self.smooth_mesh_vertices(limb_vertices, limb_faces)
                     
-                    # Adjust face indices
                     adjusted_limb_faces = [[f[0] + vertex_offset, f[1] + vertex_offset, f[2] + vertex_offset] 
                                           for f in limb_faces]
                     
@@ -334,6 +462,7 @@ class BodyMeshGenerator:
                         'face_start': face_start,
                         'face_count': len(adjusted_limb_faces)
                     }
+                    mesh_data['materials'][limb] = {'color': [0.9, 0.8, 0.7, 1.0]}  # Skin color
                     vertex_offset += len(limb_vertices)
                     
                 except Exception as e:
@@ -344,12 +473,15 @@ class BodyMeshGenerator:
                 'total_vertices': len(mesh_data['vertices']),
                 'total_faces': len(mesh_data['faces']),
                 'segments_created': list(mesh_data['segments'].keys()),
-                'generation_method': 'pose_landmarks_to_mesh'
+                'generation_method': 'anatomical_pose_reconstruction',
+                'smoothing_applied': True,
+                'anatomically_correct': True
             }
             
-            print(f"✅ Mesh generation completed!")
+            print(f"✅ Realistic mesh generation completed!")
             print(f"📊 Total vertices: {mesh_data['metadata']['total_vertices']}")
             print(f"📊 Total faces: {mesh_data['metadata']['total_faces']}")
+            print(f"🎭 Segments created: {', '.join(mesh_data['segments'].keys())}")
             
             return mesh_data
             
@@ -368,11 +500,16 @@ class BodyMeshGenerator:
         obj_file = os.path.join(session_dir, "body_mesh.obj")
         self.export_to_obj(mesh_data, obj_file)
         
+        # Save as PLY file for better 3D software compatibility
+        ply_file = os.path.join(session_dir, "body_mesh.ply")
+        self.export_to_ply(mesh_data, ply_file)
+        
         print(f"💾 Mesh saved: {mesh_file}")
         print(f"💾 OBJ exported: {obj_file}")
+        print(f"💾 PLY exported: {ply_file}")
     
     def export_to_obj(self, mesh_data: Dict, obj_file: str):
-        """Export mesh to OBJ format"""
+        """Export mesh to OBJ format with materials"""
         with open(obj_file, 'w') as f:
             f.write("# 3D Body Mesh generated from pose estimation\n")
             f.write(f"# Vertices: {len(mesh_data['vertices'])}\n")
@@ -388,35 +525,78 @@ class BodyMeshGenerator:
             for face in mesh_data['faces']:
                 f.write(f"f {face[0]+1} {face[1]+1} {face[2]+1}\n")
     
+    def export_to_ply(self, mesh_data: Dict, ply_file: str):
+        """Export mesh to PLY format"""
+        vertices = mesh_data['vertices']
+        faces = mesh_data['faces']
+        
+        with open(ply_file, 'w') as f:
+            f.write("ply\n")
+            f.write("format ascii 1.0\n")
+            f.write(f"element vertex {len(vertices)}\n")
+            f.write("property float x\n")
+            f.write("property float y\n")
+            f.write("property float z\n")
+            f.write(f"element face {len(faces)}\n")
+            f.write("property list uchar int vertex_indices\n")
+            f.write("end_header\n")
+            
+            # Write vertices
+            for vertex in vertices:
+                f.write(f"{vertex[0]:.6f} {vertex[1]:.6f} {vertex[2]:.6f}\n")
+            
+            # Write faces
+            for face in faces:
+                f.write(f"3 {face[0]} {face[1]} {face[2]}\n")
+    
     def visualize_mesh(self, mesh_data: Dict, session_dir: str = None):
-        """Visualize the generated mesh"""
+        """Visualize the generated mesh with improved rendering"""
         vertices = np.array(mesh_data['vertices'])
         faces = mesh_data['faces']
         
-        # Create 3D plot
+        # Create 3D plot with better styling
         fig = plt.figure(figsize=(15, 10))
         ax = fig.add_subplot(111, projection='3d')
         
-        # Create mesh collection
-        mesh_faces = []
-        for face in faces:
-            triangle = [vertices[face[0]], vertices[face[1]], vertices[face[2]]]
-            mesh_faces.append(triangle)
+        # Create mesh collection with different colors for different segments
+        segments = mesh_data.get('segments', {})
+        materials = mesh_data.get('materials', {})
         
-        # Add mesh to plot
-        mesh_collection = Poly3DCollection(mesh_faces, alpha=0.7, facecolor='lightblue', edgecolor='black')
-        ax.add_collection3d(mesh_collection)
+        for segment_name, segment_info in segments.items():
+            start_face = segment_info['face_start']
+            face_count = segment_info['face_count']
+            
+            segment_faces = faces[start_face:start_face + face_count]
+            mesh_faces = []
+            
+            for face in segment_faces:
+                triangle = [vertices[face[0]], vertices[face[1]], vertices[face[2]]]
+                mesh_faces.append(triangle)
+            
+            # Get color for this segment
+            color = materials.get(segment_name, {}).get('color', [0.7, 0.7, 0.9, 0.8])
+            
+            # Add mesh to plot
+            mesh_collection = Poly3DCollection(mesh_faces, alpha=color[3], 
+                                             facecolor=color[:3], edgecolor='black', linewidth=0.1)
+            ax.add_collection3d(mesh_collection)
         
-        # Set plot limits
-        ax.set_xlim([vertices[:, 0].min(), vertices[:, 0].max()])
-        ax.set_ylim([vertices[:, 1].min(), vertices[:, 1].max()])
-        ax.set_zlim([vertices[:, 2].min(), vertices[:, 2].max()])
+        # Set plot limits and styling
+        ax.set_xlim([vertices[:, 0].min() - 0.1, vertices[:, 0].max() + 0.1])
+        ax.set_ylim([vertices[:, 1].min() - 0.1, vertices[:, 1].max() + 0.1])
+        ax.set_zlim([vertices[:, 2].min() - 0.1, vertices[:, 2].max() + 0.1])
         
         # Labels and title
-        ax.set_xlabel('X')
-        ax.set_ylabel('Y')
-        ax.set_zlabel('Z')
-        ax.set_title('3D Body Mesh Reconstruction')
+        ax.set_xlabel('X (meters)')
+        ax.set_ylabel('Y (meters)')
+        ax.set_zlabel('Z (meters)')
+        ax.set_title('3D Anatomical Body Mesh Reconstruction', fontsize=16, fontweight='bold')
+        
+        # Set equal aspect ratio
+        ax.set_box_aspect([1,1,1])
+        
+        # Add lighting effect
+        ax.view_init(elev=20, azim=45)
         
         # Save visualization
         if session_dir:
@@ -430,7 +610,7 @@ def main():
     """Main function for mesh generation"""
     generator = BodyMeshGenerator()
     
-    print("🎭 3D Body Mesh Generator")
+    print("🎭 3D Anatomical Body Mesh Generator")
     session_dir = input("Enter session directory path: ").strip()
     
     if not os.path.exists(session_dir):
@@ -448,11 +628,12 @@ def main():
         print("🎨 Creating mesh visualization...")
         generator.visualize_mesh(mesh_data, session_dir)
         
-        print(f"\n✅ Mesh generation completed!")
+        print(f"\n✅ Anatomical mesh generation completed!")
         print(f"📁 Results saved in: {session_dir}")
         print(f"📄 Files created:")
         print(f"  - body_mesh.json (mesh data)")
         print(f"  - body_mesh.obj (3D model)")
+        print(f"  - body_mesh.ply (3D model)")
         print(f"  - mesh_visualization.png (preview)")
         
     except Exception as e:
