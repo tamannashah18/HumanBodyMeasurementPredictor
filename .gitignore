@@ -1,4 +1,8 @@
 final_model.h5
 initialmodel.h5
 .env
-venv
+venv_aws
+venv_3d
+bodym_dataset
+bodym_full_dataset
+captures
